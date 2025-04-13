@@ -120,7 +120,7 @@ def call_model(state: State, config: RunnableConfig):
         ]
     )
     prompt = prompt_template.invoke(state)
-    if st.session_state.model_config["response_type"] == "json_mode":
+    if config["configurable"].get("response_type") == "json_mode":
         response = model.with_structured_output(
             method='json_mode',
             include_raw=True
@@ -147,6 +147,22 @@ with st.container(border=True):
         "Prompt模板"
     )
 
+class OutputWrapper():
+    def __init__(self):
+        self._cot_end = False
+
+    def __call__(self, output):
+        for chunk, _ in output:
+            if "reasoning_content" not in chunk.additional_kwargs and not chunk.content:
+                yield ""
+            elif "reasoning_content" in chunk.additional_kwargs:
+                yield chunk.additional_kwargs["reasoning_content"]
+            else:
+                if not self._cot_end:
+                    self._cot_end = True
+                    yield "\n\n<思维链结束>\n\n"
+                yield chunk.content
+
 chat_box = st.container()
 for msg in st.session_state.messages:
     chat_box.chat_message(msg.type).write(msg.content)
@@ -154,16 +170,48 @@ if user_input := st.chat_input(placeholder="使用Prompt模板发送消息"):
     chat_box.chat_message("user").write(user_input)
 
     input_messages = [HumanMessage(user_input)]
-    output = st.session_state.app.invoke(
+    output = st.session_state.app.stream(
         {"messages": input_messages, "system_prompt": system_prompt},
-        config = {"configurable": st.session_state.model_config}
+        config = {"configurable": st.session_state.model_config},
+        stream_mode="messages",
+        debug=True
     )
     # output["messages"][-1].pretty_print()
 
+
     with chat_box.chat_message("ai"):
-        if "reasoning_content" in output["messages"][-1].additional_kwargs:
-            st.caption(output["messages"][-1].additional_kwargs["reasoning_content"])
-        st.write(output["messages"][-1].content)
-    st.session_state.messages = output["messages"]
+        # with st.expander("思维链", expanded=True):
+        #     st.write_stream(reasoning_output_wrapper(output))
+        # for chunk in output:
+        #     print(chunk)
+
+        output_wrapper = OutputWrapper()
+        msg_placeholder = st.empty()
+        with msg_placeholder:
+            msg = st.write_stream(output_wrapper(output))
+        msg_placeholder.empty()
+        cot_msg, msg = msg.split("<思维链结束>")
+        cot_msg, msg = cot_msg.strip(), msg.strip()
+        with st.expander("思维链", expanded=True):
+            st.caption(cot_msg)
+        st.write(msg)
+    st.write(st.session_state.app.store)
+
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = []
+    # st.session_state.messages = output["messages"]
+
+    # output = st.session_state.app.invoke(
+    #     {"messages": input_messages, "system_prompt": system_prompt},
+    #     config = {"configurable": st.session_state.model_config}
+    # )
+    # # output["messages"][-1].pretty_print()
+
+    # with chat_box.chat_message("ai"):
+    #     if "reasoning_content" in output["messages"][-1].additional_kwargs:
+    #         st.caption(output["messages"][-1].additional_kwargs["reasoning_content"])
+    #     st.write(output["messages"][-1].content)
+    # st.session_state.messages = output["messages"]
+
 
 # 页面结束
