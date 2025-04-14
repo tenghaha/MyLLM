@@ -1,5 +1,6 @@
 import streamlit as st
 
+st.set_page_config(page_title="MyLLM", layout="wide")
 
 pages = {
     "导航": [

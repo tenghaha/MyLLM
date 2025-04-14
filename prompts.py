@@ -1,5 +1,6 @@
-
+import hashlib
 import json
+import time
 from typing import Sequence
 from typing_extensions import Annotated, TypedDict
 
@@ -8,21 +9,43 @@ import streamlit as st
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, END, MessagesState, StateGraph
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_deepseek import ChatDeepSeek
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 
 
-# TODO: 待实现功能：Prompt储存、对话管理、流式传输、RAG、Agent Tools、OpenAI兼容
+# TODO: 待实现功能：Prompt储存、RAG、Agent Tools、OpenAI兼容
 # 页面开始
 st.title("Prompts")
 
 # 1. 侧边栏：确定模型及参数
+def hash_from_time():
+    time_bytes = str(time.time()).encode("utf-8")
+    return hashlib.md5(time_bytes).hexdigest()
+
+def restart_session():
+    st.session_state["model_config"]["thread_id"] = hash_from_time()
+    st.session_state["messages"] = []
+    st.session_state["confirmed_restart"] = True
+    st.rerun()
+
+@st.dialog("注意")
+def if_restart():
+    st.write("开始一段新的对话并清空所有对话上下文，确认吗？")
+    c1, c2 = st.columns(2, vertical_alignment="bottom")
+    with c1:
+        if st.button("确认", use_container_width=True):
+            restart_session()
+    with c2:
+        if st.button("取消", use_container_width=True):
+            st.rerun()       
+
+
 with st.sidebar:
     if "model_config" not in st.session_state:
-        st.session_state["model_config"] = {"thread_id": "abc456"} # TODO: 对话管理：用config控制session_id
+        st.session_state["model_config"] = {"thread_id": hash_from_time()}
     
     st.session_state.model_config["api"] = st.selectbox(
         "API",
@@ -35,6 +58,9 @@ with st.sidebar:
         options=["deepseek-chat", "deepseek-reasoner"],
         placeholder="选择模型"
     )
+
+    # st.info(st.session_state.model_config["model"])
+
     st.session_state.model_config["response_type"] = st.radio(
         "输出格式",
         options=["text","json_mode"],
@@ -168,52 +194,71 @@ def run_chat(output):
     st.session_state["messages"] = output_wrapper.values["messages"]
 
 
+def parse_messages_history(_messages: list):
+    parsed_messages = []
+    for msg in _messages:
+        if isinstance(msg, HumanMessage):
+            parsed_messages.append({
+                "role": "human",
+                "content": msg.content
+                })
+        elif isinstance(msg, AIMessage):
+            parsed_messages.append({
+                "role": "ai",
+                "content": msg.content,
+                "additional_kwargs": msg.additional_kwargs  # TODO:如何处理tool call
+                })
+    return parsed_messages
+
+
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 
-col1, col2 = st.columns(2)
+prompt_col, main_col, widget_col = st.columns([0.35, 0.6, 0.05])
 
-with col1:
+with prompt_col:
     with st.container(height=500):
         system_prompt = st.text_area(
-            "Prompt模板"
+            "系统消息",
+            height=250,
+            max_chars=1000,
+            placeholder="提示需要模型做的事情\n例如：“帮我将输入的中文翻译为英文”"
         )
 
-with col2:
+with main_col:
     chat_box = st.container(height=500)
     chatbox_placeholder = chat_box.empty()
     if not st.session_state.messages:
-        chatbox_placeholder.caption("输入消息以开始聊天")
+        chatbox_placeholder.caption("发送消息以开始聊天")
     for msg in st.session_state.messages:
         chat_box.chat_message(msg.type).write(msg.content)
 
-    if user_input := st.chat_input(placeholder="使用Prompt模板发送消息"):
-        chatbox_placeholder.empty()
-        chat_box.chat_message("user").write(user_input)
+with widget_col:
+    if st.button("", icon=":material/restart_alt:", help="开始新对话"):
+        if_restart()
+    parsed_messages = parse_messages_history(st.session_state.messages)
+    st.download_button(
+        "",
+        data=json.dumps(parsed_messages, ensure_ascii=False),
+        file_name=f"对话记录_{time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())}.json",
+        icon=":material/download:",
+        help="导出对话记录")
+        
 
-        input_messages = [HumanMessage(user_input)]
-        output = st.session_state.app.stream(
-            {"messages": input_messages, "system_prompt": system_prompt},
-            config = {"configurable": st.session_state.model_config},
-            stream_mode=["messages", "values"]
-        )
+if user_input := st.chat_input(placeholder="发送消息"):
+    chatbox_placeholder.empty()
+    chat_box.chat_message("user").write(user_input)
 
-        with chat_box.chat_message("ai"):
-            run_chat(output)
+    input_messages = [HumanMessage(user_input)]
+    output = st.session_state.app.stream(
+        {"messages": input_messages, "system_prompt": system_prompt},
+        config = {"configurable": st.session_state.model_config},
+        stream_mode=["messages", "values"]
+    )
 
-        # st.session_state.messages = output["messages"]
+    with chat_box.chat_message("ai"):
+        run_chat(output)
 
-        # output = st.session_state.app.invoke(
-        #     {"messages": input_messages, "system_prompt": system_prompt},
-        #     config = {"configurable": st.session_state.model_config}
-        # )
-        # # output["messages"][-1].pretty_print()
-
-        # with chat_box.chat_message("ai"):
-        #     if "reasoning_content" in output["messages"][-1].additional_kwargs:
-        #         st.caption(output["messages"][-1].additional_kwargs["reasoning_content"])
-        #     st.write(output["messages"][-1].content)
-        # st.session_state.messages = output["messages"]
-
-
+# with st.expander("debug"):
+#     st.write(st.session_state.messages)
 # 页面结束
