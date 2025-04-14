@@ -11,21 +11,9 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_deepseek import ChatDeepSeek
-from langchain.prompts import (
-    ChatPromptTemplate,
-    MessagesPlaceholder,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-)
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 
-
-# DEEPSEEK_API_KEY = os.environ['DEEPSEEK_API_KEY']
-# OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
-# BASE_URL = {
-#     "DeepSeek": "https://api.deepseek.com/v1",
-#     "OpenAI": "https://api.openai.com/v1"
-# }
 
 # TODO: 待实现功能：Prompt储存、对话管理、流式传输、RAG、Agent Tools、OpenAI兼容
 # 页面开始
@@ -140,22 +128,11 @@ if "app" not in st.session_state:
 
 
 # 3. 主页面：处理prompt和输入
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
-
-col1, col2 = st.columns(2)
-
-with col1:
-    with st.container(height=500):
-        system_prompt = st.text_area(
-            "Prompt模板"
-        )
-
 class OutputWrapper():
     def __init__(self):
         self._cot_end = False
         self.values = {}
-        self.sp = "<------------------------------------>"
+        self.sp = "------------------------------------"
 
     def __call__(self, output):
         for stream_mode, chunk in output:
@@ -173,12 +150,45 @@ class OutputWrapper():
             else:
                 self.values = chunk
 
+
+@st.fragment()
+def run_chat(output):
+    output_wrapper = OutputWrapper()
+    msg_placeholder = st.empty()
+    with msg_placeholder:
+        with st.status("思考中...", expanded=True):
+            msg = st.write_stream(output_wrapper(output))
+    msg_placeholder.empty()
+    cot_msg, msg = msg.split(output_wrapper.sp)
+    cot_msg, msg = cot_msg.strip(), msg.strip()
+    if cot_msg:
+        with st.expander("思维链"):
+            st.caption(cot_msg)
+    st.markdown(msg)
+    st.session_state["messages"] = output_wrapper.values["messages"]
+
+
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+
+col1, col2 = st.columns(2)
+
+with col1:
+    with st.container(height=500):
+        system_prompt = st.text_area(
+            "Prompt模板"
+        )
+
 with col2:
     chat_box = st.container(height=500)
+    chatbox_placeholder = chat_box.empty()
+    if not st.session_state.messages:
+        chatbox_placeholder.caption("输入消息以开始聊天")
     for msg in st.session_state.messages:
         chat_box.chat_message(msg.type).write(msg.content)
 
     if user_input := st.chat_input(placeholder="使用Prompt模板发送消息"):
+        chatbox_placeholder.empty()
         chat_box.chat_message("user").write(user_input)
 
         input_messages = [HumanMessage(user_input)]
@@ -189,19 +199,8 @@ with col2:
         )
 
         with chat_box.chat_message("ai"):
-            output_wrapper = OutputWrapper()
-            msg_placeholder = st.empty()
-            with msg_placeholder:
-                msg = st.write_stream(output_wrapper(output))
-            msg_placeholder.empty()
-            cot_msg, msg = msg.split(output_wrapper.sp)
-            cot_msg, msg = cot_msg.strip(), msg.strip()
-            if cot_msg:
-                with st.expander("思维链", expanded=True):
-                    st.caption(cot_msg)
-            st.write(msg)
+            run_chat(output)
 
-        st.session_state["messages"] = output_wrapper.values["messages"]
         # st.session_state.messages = output["messages"]
 
         # output = st.session_state.app.invoke(
