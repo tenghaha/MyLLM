@@ -194,6 +194,69 @@ def run_chat(output):
     st.session_state["messages"] = output_wrapper.values["messages"]
 
 
+@st.dialog("保存模板")
+def save_system_prompt(system_prompt):
+    if not system_prompt:
+        st.write("要保存的prompt模板不可为空")
+        if st.button("确定", use_container_width=True):
+            st.rerun()
+    else:
+        prompt_name = st.text_input("模板名称", max_chars=20)
+        prompt_desc = st.text_input("模板描述（可选）", max_chars=100)
+        confirm_col, cancel_col = st.columns(2)
+        if confirm_col.button("保存", use_container_width=True):
+            with open("prompts.json", encoding="utf-8") as fp:
+                prompt_dict = json.loads(fp.read())
+            with open("prompts.json", "w", encoding="utf-8") as fp:
+                if prompt_name in prompt_dict:
+                    prompt_name = prompt_name + "_1"    # 模板重名处理
+                prompt_dict[prompt_name] = {
+                    "content": system_prompt,
+                    "description": prompt_desc
+                }
+                fp.write(json.dumps(prompt_dict, ensure_ascii=False))
+            st.rerun()
+        if cancel_col.button("取消", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("更新模板")
+def update_system_prompt(prompt_name ,system_prompt):
+    if not system_prompt:
+        st.write("要保存的prompt模板不可为空")
+        if st.button("确定"):
+            st.rerun()
+    else:
+        st.write("是否保存新的模板？")
+        prompt_desc = st.text_input("模板描述（留空则不变）", max_chars=100)
+        confirm_col, cancel_col = st.columns(2)
+        if confirm_col.button("保存", use_container_width=True):
+            with open("prompts.json", encoding="utf-8") as fp:
+                prompt_dict = json.loads(fp.read())
+            with open("prompts.json", "w", encoding="utf-8") as fp:
+                prompt_dict[prompt_name]["content"] = system_prompt
+                prompt_dict[prompt_name]["description"] = prompt_desc
+                fp.write(json.dumps(prompt_dict, ensure_ascii=False))
+            st.rerun()
+        if cancel_col.button("取消", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("删除模板")
+def delete_system_prompt(prompt_name):
+    st.write("是否确认删除？ :red[本操作不可撤销！]")
+    confirm_col, cancel_col = st.columns(2)
+    if confirm_col.button("确认", use_container_width=True):
+        with open("prompts.json", encoding="utf-8") as fp:
+            prompt_dict = json.loads(fp.read())
+        with open("prompts.json", "w", encoding="utf-8") as fp:
+            prompt_dict.pop(prompt_name)
+            fp.write(json.dumps(prompt_dict, ensure_ascii=False))
+        st.rerun()
+    if cancel_col.button("取消", use_container_width=True):
+        st.rerun()
+
+
 def parse_messages_history(_messages: list):
     parsed_messages = []
     for msg in _messages:
@@ -216,27 +279,53 @@ if "messages" not in st.session_state:
 
 prompt_col, main_col, widget_col = st.columns([0.35, 0.6, 0.05])
 
-with prompt_col:
-    with st.container(height=500):
-        prompt_pattern = st.selectbox(
-            "选择模板",
-            options=["(新模板)","__"]
-        )
-        if prompt_pattern == "(新模板)":
-            st.button("保存模板", use_container_width=True) # 如果选择新模板，可以保存模板至prompts.json
-        else:
-            p_col1, p_col2 = st.columns(2)  # 选择已有模板的逻辑
-            p_col1.button("更新模板", use_container_width=True)
-            p_col2.button("删除模板", use_container_width=True)
-        system_prompt = st.text_area(
+with prompt_col:    # TODO: 为每个用户设置不同的prompt库
+    with st.container(height=550):
+        prompt_save_placeholder = st.container()
+        prompt_content_placeholder = st.empty()
+        prompt_desc_placeholder = st.empty()
+
+        system_prompt = prompt_content_placeholder.text_area(
             "Prompt模板",
-            height=300,
+            height=200,
             max_chars=1000,
             placeholder="提示需要模型做的事情\n例如：“帮我将输入的中文翻译为英文”"
         )
+        with prompt_desc_placeholder.container(height=130):
+            st.write("模板描述")
+            st.write()
+
+        with open("prompts.json", encoding="utf-8") as fp:
+            saved_prompts = json.loads(fp.read())
+        prompt_name = prompt_save_placeholder.selectbox(
+            "选择模板",
+            options=["(新模板)"] + list(saved_prompts.keys())
+        )
+        if prompt_name == "(新模板)":
+            if prompt_save_placeholder.button("保存模板", use_container_width=True): # 如果选择新模板，可以保存模板至prompts.json
+                save_system_prompt(system_prompt)
+        else:
+            system_prompt = prompt_content_placeholder.text_area(
+                "Prompt模板",
+                value=saved_prompts[prompt_name]["content"],
+                height=200,
+                max_chars=1000,
+                placeholder="提示需要模型做的事情\n例如：“帮我将输入的中文翻译为英文”"
+            )
+
+            with prompt_desc_placeholder.container(height=130):
+                st.write("模板描述")
+                st.write(saved_prompts[prompt_name]["description"])
+
+            p_col1, p_col2 = prompt_save_placeholder.columns(2)  # 选择已有模板的逻辑
+            if p_col1.button("更新模板", use_container_width=True):
+                update_system_prompt(prompt_name, system_prompt)
+            if p_col2.button("删除模板", use_container_width=True):
+                delete_system_prompt(prompt_name)
+
 
 with main_col:
-    chat_box = st.container(height=500)
+    chat_box = st.container(height=550)
     chatbox_placeholder = chat_box.empty()
     if not st.session_state.messages:
         chatbox_placeholder.caption("发送消息以开始聊天")
