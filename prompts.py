@@ -16,7 +16,7 @@ from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 
 
-# TODO: 待实现功能：Prompt储存、RAG、Agent Tools、OpenAI兼容
+# TODO: 待实现功能：Prompt储存、用户认证、RAG、Agent Tools、OpenAI兼容
 # 页面开始
 st.title("Prompts")
 
@@ -218,9 +218,19 @@ prompt_col, main_col, widget_col = st.columns([0.35, 0.6, 0.05])
 
 with prompt_col:
     with st.container(height=500):
+        prompt_pattern = st.selectbox(
+            "选择模板",
+            options=["(新模板)","__"]
+        )
+        if prompt_pattern == "(新模板)":
+            st.button("保存模板", use_container_width=True) # 如果选择新模板，可以保存模板至prompts.json
+        else:
+            p_col1, p_col2 = st.columns(2)  # 选择已有模板的逻辑
+            p_col1.button("更新模板", use_container_width=True)
+            p_col2.button("删除模板", use_container_width=True)
         system_prompt = st.text_area(
-            "系统消息",
-            height=250,
+            "Prompt模板",
+            height=300,
             max_chars=1000,
             placeholder="提示需要模型做的事情\n例如：“帮我将输入的中文翻译为英文”"
         )
@@ -237,6 +247,7 @@ with widget_col:
     if st.button("", icon=":material/restart_alt:", help="开始新对话"):
         if_restart()
     parsed_messages = parse_messages_history(st.session_state.messages)
+    parsed_messages = [{"role": "system", "content": system_prompt}] + parsed_messages
     st.download_button(
         "",
         data=json.dumps(parsed_messages, ensure_ascii=False),
