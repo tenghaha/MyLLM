@@ -18,7 +18,9 @@ from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 # TODO: 待实现功能：Prompt储存、用户认证、RAG、Agent Tools、OpenAI兼容
 # 页面开始
-st.title("Prompts")
+st.header("Prompts")
+st.caption("💬直接开始或使用预定的prompt模板进行会话")
+st.caption("⚙️在左侧边栏调整模型参数，右侧主窗口进行会话/保存模板/导出会话记录等")
 
 # 1. 侧边栏：确定模型及参数
 def hash_from_time():
@@ -302,8 +304,8 @@ with prompt_col:    # TODO: 为每个用户设置不同的prompt库
             options=["(新模板)"] + list(saved_prompts.keys())
         )
         if prompt_name == "(新模板)":
-            if prompt_save_placeholder.button("保存模板", use_container_width=True): # 如果选择新模板，可以保存模板至prompts.json
-                save_system_prompt(system_prompt)
+            if prompt_save_placeholder.button("保存当前模板", icon=":material/save:", use_container_width=True):
+                save_system_prompt(system_prompt)   # 如果选择新模板，可以保存模板至prompts.json
         else:
             system_prompt = prompt_content_placeholder.text_area(
                 "Prompt模板",
@@ -313,14 +315,17 @@ with prompt_col:    # TODO: 为每个用户设置不同的prompt库
                 placeholder="提示需要模型做的事情\n例如：“帮我将输入的中文翻译为英文”"
             )
 
-            with prompt_desc_placeholder.container(height=130):
-                st.write("模板描述")
-                st.write(saved_prompts[prompt_name]["description"])
+            prompt_desc_placeholder.text_area(
+                "模板描述",
+                value=saved_prompts[prompt_name]["description"],
+                height=100,
+                disabled=True
+                )
 
             p_col1, p_col2 = prompt_save_placeholder.columns(2)  # 选择已有模板的逻辑
-            if p_col1.button("更新模板", use_container_width=True):
+            if p_col1.button("更新", icon=":material/sync:", use_container_width=True):
                 update_system_prompt(prompt_name, system_prompt)
-            if p_col2.button("删除模板", use_container_width=True):
+            if p_col2.button("删除", icon=":material/delete:", use_container_width=True):
                 delete_system_prompt(prompt_name)
 
 
