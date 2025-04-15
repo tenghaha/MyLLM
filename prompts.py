@@ -294,7 +294,6 @@ with prompt_col:    # TODO: 为每个用户设置不同的prompt库
             placeholder="提示需要模型做的事情\n例如：“帮我将输入的中文翻译为英文”"
         )
         with prompt_desc_placeholder.container(height=130):
-            st.write("模板描述")
             st.write()
 
         with open("prompts.json", encoding="utf-8") as fp:
@@ -315,12 +314,8 @@ with prompt_col:    # TODO: 为每个用户设置不同的prompt库
                 placeholder="提示需要模型做的事情\n例如：“帮我将输入的中文翻译为英文”"
             )
 
-            prompt_desc_placeholder.text_area(
-                "模板描述",
-                value=saved_prompts[prompt_name]["description"],
-                height=100,
-                disabled=True
-                )
+            with prompt_desc_placeholder.container(height=130):
+                st.write(saved_prompts[prompt_name]["description"])
 
             p_col1, p_col2 = prompt_save_placeholder.columns(2)  # 选择已有模板的逻辑
             if p_col1.button("更新", icon=":material/sync:", use_container_width=True):
