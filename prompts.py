@@ -3,20 +3,24 @@ import json
 import time
 from typing import Sequence
 from typing_extensions import Annotated, TypedDict
+from pydantic import BaseModel
 
 import streamlit as st
-
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, END, MessagesState, StateGraph
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from langchain_deepseek import ChatDeepSeek
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from state_graph import workflow
 
 
-# TODO: 待实现功能：Prompt储存、用户认证、RAG、Agent Tools、OpenAI兼容
+# TODO: 待实现功能：用户认证、对话长度控制、RAG、Agent Tools、OpenAI兼容
+# TODO: RAG功能：网络检索、本地文档上传（PDF或TXT）检索，知识库检索。网络检索和本地文档上传逻辑通用（临时RAG库），知识库检索需要包含知识库管理+检索功能
+# TODO: RAG开发顺序：将网络检索工具加入graph - 设计整体检索功能，接口为本地上传文档+自建知识库 - 设计自建知识库
 # 页面开始
 st.header("Prompts")
 st.caption("💬直接开始或使用预定的prompt模板进行会话")
@@ -61,6 +65,11 @@ with st.sidebar:
         placeholder="选择模型"
     )
 
+    st.session_state.model_config["use_web_context"] = st.checkbox(
+        "联网搜索",
+        help="模型是否检索互联网信息（消耗更多token）"
+        )
+    
     # st.info(st.session_state.model_config["model"])
 
     st.session_state.model_config["response_type"] = st.radio(
@@ -106,50 +115,6 @@ with st.sidebar:
 
 
 # 2. 预处理：编译LangGraph
-
-class State(TypedDict):
-    messages: Annotated[Sequence[BaseMessage], add_messages]
-    system_prompt: str
-
-class ConfigSchema(TypedDict):
-    model: str
-    max_tokens: int
-    temperature: float
-    top_p: float
-    frequency_penalty: float
-    presence_penalty: float
-
-def call_model(state: State, config: RunnableConfig):
-    model = ChatDeepSeek(
-        # base_url=BASE_URL[st.session_state.model_config["api"]],
-        model_name=config["configurable"].get("model"),
-        max_tokens=config["configurable"].get("max_tokens"),
-        temperature=config["configurable"].get("temperature"),
-        top_p=config["configurable"].get("top_p"),
-        frequency_penalty=config["configurable"].get("frequency_penalty"),
-        presence_penalty=config["configurable"].get("presence_penalty")
-    )
-    prompt_template = ChatPromptTemplate.from_messages(
-        [
-            ("system", "{system_prompt}"),
-            MessagesPlaceholder(variable_name="messages"),
-        ]
-    )
-    prompt = prompt_template.invoke(state)
-    if config["configurable"].get("response_type") == "json_mode":
-        response = model.with_structured_output(
-            method='json_mode',
-            include_raw=True
-            ).invoke(prompt)["raw"] # 取原始JSON字符串message
-    else:
-        response = model.invoke(prompt)
-    return {"messages": [response]}
-
-workflow = StateGraph(state_schema=State, config_schema=ConfigSchema)
-workflow.add_edge(START, "model")
-workflow.add_node("model", call_model)
-workflow.add_edge("model", END)
-
 memory = MemorySaver()
 if "app" not in st.session_state:
     st.session_state["app"] = workflow.compile(checkpointer=memory)
@@ -164,17 +129,19 @@ class OutputWrapper():
 
     def __call__(self, output):
         for stream_mode, chunk in output:
+            # print(stream_mode, chunk)
             if stream_mode == "messages":
                 msg_chunk, _ = chunk
-                if "reasoning_content" not in msg_chunk.additional_kwargs and not msg_chunk.content:
-                    yield ""
-                elif "reasoning_content" in msg_chunk.additional_kwargs:
-                    yield msg_chunk.additional_kwargs["reasoning_content"]
-                else:
-                    if not self._cot_end:
-                        self._cot_end = True
-                        yield f"\n\n{self.sp}\n\n"
-                    yield msg_chunk.content
+                if not isinstance(msg_chunk, ToolMessage):
+                    if "reasoning_content" not in msg_chunk.additional_kwargs and not msg_chunk.content:
+                        yield ""
+                    elif "reasoning_content" in msg_chunk.additional_kwargs:
+                        yield msg_chunk.additional_kwargs["reasoning_content"]
+                    else:
+                        if not self._cot_end:
+                            self._cot_end = True
+                            yield f"\n\n{self.sp}\n\n"
+                        yield msg_chunk.content
             else:
                 self.values = chunk
 
@@ -271,7 +238,7 @@ def parse_messages_history(_messages: list):
             parsed_messages.append({
                 "role": "ai",
                 "content": msg.content,
-                "additional_kwargs": msg.additional_kwargs  # TODO:如何处理tool call
+                "additional_kwargs": msg.additional_kwargs
                 })
     return parsed_messages
 
@@ -330,7 +297,8 @@ with main_col:
     if not st.session_state.messages:
         chatbox_placeholder.caption("发送消息以开始聊天")
     for msg in st.session_state.messages:
-        chat_box.chat_message(msg.type).write(msg.content)
+        if msg.type in ["human", "ai"] and msg.content:
+            chat_box.chat_message(msg.type).write(msg.content)
 
 with widget_col:
     if st.button("", icon=":material/restart_alt:", help="开始新对话"):
@@ -345,11 +313,11 @@ with widget_col:
         help="导出对话记录")
         
 
-if user_input := st.chat_input(placeholder="发送消息"):
+if user_input := st.chat_input(placeholder="发送消息", accept_file=True, file_type=["pdf", "txt"]):
     chatbox_placeholder.empty()
-    chat_box.chat_message("user").write(user_input)
+    chat_box.chat_message("user").write(user_input.text)
 
-    input_messages = [HumanMessage(user_input)]
+    input_messages = [HumanMessage(user_input.text)]
     output = st.session_state.app.stream(
         {"messages": input_messages, "system_prompt": system_prompt},
         config = {"configurable": st.session_state.model_config},
@@ -358,7 +326,9 @@ if user_input := st.chat_input(placeholder="发送消息"):
 
     with chat_box.chat_message("ai"):
         run_chat(output)
+    
+    st.rerun()
 
 # with st.expander("debug"):
-#     st.write(st.session_state.messages)
+#     st.write(st.session_state.app.get_state({"configurable": st.session_state.model_config}))
 # 页面结束

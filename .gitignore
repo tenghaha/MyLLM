@@ -1,2 +1,4 @@
 .devcontainer
 */secrets*
+*tmp*
+__pycache__
