@@ -1,21 +1,12 @@
 import hashlib
 import json
 import time
-from typing import Sequence
-from typing_extensions import Annotated, TypedDict
-from pydantic import BaseModel
 
 import streamlit as st
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import START, END, MessagesState, StateGraph
-from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
-from langchain_core.runnables import RunnableConfig
-from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
-from langchain_deepseek import ChatDeepSeek
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
-from state_graph import workflow
+from llm.state_graph import WorkFlow
 
 
 # TODO: 待实现功能：用户认证、对话长度控制、RAG、Agent Tools、OpenAI兼容
@@ -115,6 +106,7 @@ with st.sidebar:
 
 
 # 2. 预处理：编译LangGraph
+workflow = WorkFlow()
 memory = MemorySaver()
 if "app" not in st.session_state:
     st.session_state["app"] = workflow.compile(checkpointer=memory)
@@ -132,7 +124,10 @@ class OutputWrapper():
             # print(stream_mode, chunk)
             if stream_mode == "messages":
                 msg_chunk, _ = chunk
-                if not isinstance(msg_chunk, ToolMessage):
+                if isinstance(msg_chunk, ToolMessage):
+                    num_web_page = len(json.loads(msg_chunk.content))
+                    yield f"*引用 {num_web_page} 篇网页作为参考*"
+                else:
                     if "reasoning_content" not in msg_chunk.additional_kwargs and not msg_chunk.content:
                         yield ""
                     elif "reasoning_content" in msg_chunk.additional_kwargs:
@@ -174,9 +169,9 @@ def save_system_prompt(system_prompt):
         prompt_desc = st.text_input("模板描述（可选）", max_chars=100)
         confirm_col, cancel_col = st.columns(2)
         if confirm_col.button("保存", use_container_width=True):
-            with open("prompts.json", encoding="utf-8") as fp:
+            with open("./prompts/prompts.json", encoding="utf-8") as fp:
                 prompt_dict = json.loads(fp.read())
-            with open("prompts.json", "w", encoding="utf-8") as fp:
+            with open("./prompts/prompts.json", "w", encoding="utf-8") as fp:
                 if prompt_name in prompt_dict:
                     prompt_name = prompt_name + "_1"    # 模板重名处理
                 prompt_dict[prompt_name] = {
@@ -200,9 +195,9 @@ def update_system_prompt(prompt_name ,system_prompt):
         prompt_desc = st.text_input("模板描述（留空则不变）", max_chars=100)
         confirm_col, cancel_col = st.columns(2)
         if confirm_col.button("保存", use_container_width=True):
-            with open("prompts.json", encoding="utf-8") as fp:
+            with open("./prompts/prompts.json", encoding="utf-8") as fp:
                 prompt_dict = json.loads(fp.read())
-            with open("prompts.json", "w", encoding="utf-8") as fp:
+            with open("./prompts/prompts.json", "w", encoding="utf-8") as fp:
                 prompt_dict[prompt_name]["content"] = system_prompt
                 prompt_dict[prompt_name]["description"] = prompt_desc
                 fp.write(json.dumps(prompt_dict, ensure_ascii=False))
@@ -216,9 +211,9 @@ def delete_system_prompt(prompt_name):
     st.write("是否确认删除？ :red[本操作不可撤销！]")
     confirm_col, cancel_col = st.columns(2)
     if confirm_col.button("确认", use_container_width=True):
-        with open("prompts.json", encoding="utf-8") as fp:
+        with open("./prompts/prompts.json", encoding="utf-8") as fp:
             prompt_dict = json.loads(fp.read())
-        with open("prompts.json", "w", encoding="utf-8") as fp:
+        with open("./prompts/prompts.json", "w", encoding="utf-8") as fp:
             prompt_dict.pop(prompt_name)
             fp.write(json.dumps(prompt_dict, ensure_ascii=False))
         st.rerun()
@@ -263,7 +258,7 @@ with prompt_col:    # TODO: 为每个用户设置不同的prompt库
         with prompt_desc_placeholder.container(height=130):
             st.write()
 
-        with open("prompts.json", encoding="utf-8") as fp:
+        with open("./prompts/prompts.json", encoding="utf-8") as fp:
             saved_prompts = json.loads(fp.read())
         prompt_name = prompt_save_placeholder.selectbox(
             "选择模板",
@@ -271,7 +266,7 @@ with prompt_col:    # TODO: 为每个用户设置不同的prompt库
         )
         if prompt_name == "(新模板)":
             if prompt_save_placeholder.button("保存当前模板", icon=":material/save:", use_container_width=True):
-                save_system_prompt(system_prompt)   # 如果选择新模板，可以保存模板至prompts.json
+                save_system_prompt(system_prompt)   # 如果选择新模板，可以保存模板至./prompts/prompts.json
         else:
             system_prompt = prompt_content_placeholder.text_area(
                 "Prompt模板",
@@ -313,7 +308,7 @@ with widget_col:
         help="导出对话记录")
         
 
-if user_input := st.chat_input(placeholder="发送消息", accept_file=True, file_type=["pdf", "txt"]):
+if user_input := st.chat_input(placeholder="发送消息", accept_file="multiple", file_type=["pdf", "txt"]):
     chatbox_placeholder.empty()
     chat_box.chat_message("user").write(user_input.text)
 
@@ -330,5 +325,5 @@ if user_input := st.chat_input(placeholder="发送消息", accept_file=True, fil
     st.rerun()
 
 # with st.expander("debug"):
-#     st.write(st.session_state.app.get_state({"configurable": st.session_state.model_config}))
+    # st.write(st.session_state.app.get_state({"configurable": st.session_state.model_config}))
 # 页面结束
